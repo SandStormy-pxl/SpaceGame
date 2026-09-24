@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nexus Strike</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+        body { background: #020617; color: #f8fafc; font-family: monospace; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        #game-container { width: 100%; max-width: 480px; height: 100%; background: #020617; position: relative; overflow: hidden; display: flex; flex-direction: column; border-left: 1px solid #0f172a; border-right: 1px solid #0f172a; }
+        canvas { display: block; width: 100%; height: 100%; background: #020617; }
+        .ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 16px; z-index: 10; }
+        .interactive { pointer-events: auto; }
+        .hud-top { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+        .btn { background: #0f172a; border: 1px solid #1e293b; color: #38bdf8; padding: 8px 14px; border-radius: 8px; font-family: monospace; font-weight: bold; font-size: 12px; cursor: pointer; }
+        .btn:active { transform: scale(0.95); }
+        .btn-primary { background: #06b6d4; color: #000; border: none; width: 100%; padding: 16px; border-radius: 12px; font-size: 14px; font-weight: 900; text-transform: uppercase; cursor: pointer; }
+        .screen { position: absolute; inset: 0; background: rgba(2, 6, 23, 0.95); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; z-index: 20; }
+        .hidden { display: none !important; }
+        h1 { font-size: 24px; font-weight: 900; color: #fff; text-transform: uppercase; margin-bottom: 8px; }
+        p { font-size: 11px; color: #94a3b8; margin-bottom: 24px; }
+        .bar-container { width: 100%; background: #0f172a; border: 1px solid #1e293b; height: 6px; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+        .bar-fill { height: 100%; background: #f43f5e; width: 100%; transition: width 0.1s linear; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- HUD DO JOGO -->
+    <div id="hud" class="ui-overlay hidden">
+        <div class="hud-top">
+            <button class="btn interactive" id="btnPause">PAUSE</button>
+            <div style="text-align: right;">
+                <div style="font-size: 9px; color: #64748b;">SCORE</div>
+                <div id="hudScore" style="font-size: 14px; font-weight: bold; color: #38bdf8;">0</div>
+            </div>
+        </div>
+        <div style="width: 100%;">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; font-weight: bold; color: #f43f5e;">
+                <span>HP: <span id="hudHp">100</span>%</span>
+                <span id="hudStatus" style="color: #38bdf8;"></span>
+            </div>
+            <div class="bar-container"><div id="hpBar" class="bar-fill"></div></div>
+        </div>
+    </div>
+
+    <!-- TELA INICIAL -->
+    <div id="screenMenu" class="screen">
+        <h1>Nexus Strike</h1>
+        <p>Versão Mobile Standalone</p>
+        <div style="width: 100%; max-width: 280px;">
+            <button class="btn-primary interactive" id="btnStart">INICIAR MISSÃO</button>
+        </div>
+    </div>
+
+    <!-- TELA DE PAUSE -->
+    <div id="screenPause" class="screen hidden">
+        <h1>Jogo Pausado</h1>
+        <div style="width: 100%; max-width: 280px; margin-top: 16px;">
+            <button class="btn-primary interactive" id="btnResume">RETOMAR</button>
+        </div>
+    </div>
+
+    <!-- TELA DE GAME OVER -->
+    <div id="screenGameOver" class="screen hidden">
+        <h1 style="color: #f43f5e;">Missão Fracassada</h1>
+        <p id="finalScore" style="font-size: 12px; color: #38bdf8; margin-bottom: 16px;">Pontuação: 0</p>
+        <div style="width: 100%; max-width: 280px; display: flex; flex-direction: column; gap: 12px;">
+            <button class="btn-primary interactive" id="btnRestart">TENTAR NOVAMENTE</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function resize() {
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = canvas.parentElement.clientHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    let state = 'menu'; // menu, playing, paused, gameover
+    let score = 0, hp = 100, playerX = canvas.width / 2, playerY = canvas.height - 80;
+    let hasShield = false, doubleLaser = false, laserTimer = 0;
+    let entities = [], bullets = [], particles = [], boss = null;
+    let spawnTimer = 0, shootTimer = 0, bossShootTimer = 0;
+
+    const keys = {};
+    window.addEventListener('keydown', e => keys[e.key] = true);
+    window.addEventListener('keyup', e => keys[e.key] = false);
+
+    canvas.addEventListener('touchmove', e => {
+        if(state === 'playing') {
+            playerX = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+        }
+    });
+    canvas.addEventListener('mousemove', e => {
+        if(state === 'playing') {
+            playerX = e.clientX - canvas.getBoundingClientRect().left;
+        }
+    });
+
+    function addParticle(x, y, text, color) {
+        particles.push({x, y, text, color, alpha: 1});
+    }
+
+    function resetGame() {
+        score = 0; hp = 100; hasShield = false; doubleLaser = false;
+        entities = []; bullets = []; particles = []; boss = null;
+        playerX = canvas.width / 2;
+        state = 'playing';
+        document.getElementById('screenMenu').classList.add('hidden');
+        document.getElementById('screenPause').classList.add('hidden');
+        document.getElementById('screenGameOver').classList.add('hidden');
+        document.getElementById('hud').classList.remove('hidden');
+    }
+
+    document.getElementById('btnStart').onclick = resetGame;
+    document.getElementById('btnRestart').onclick = resetGame;
+    document.getElementById('btnResume').onclick = () => { state = 'playing'; document.getElementById('screenPause').classList.add('hidden'); };
+    document.getElementById('btnPause').onclick = () => { state = 'paused'; document.getElementById('screenPause').classList.remove('hidden'); };
+
+    function update(dt) {
+        if (state !== 'playing') return;
+
+        score += 1;
+        document.getElementById('hudScore').innerText = score;
+        document.getElementById('hudHp').innerText = hp;
+        document.getElementById('hpBar').style.width = hp + '%';
+        document.getElementById('hudStatus').innerText = hasShield ? 'ESCUDO' : (doubleLaser ? 'DUPLO' : '');
+
+        if (doubleLaser) {
+            laserTimer += dt;
+            if (laserTimer > 7) { doubleLaser = false; laserTimer = 0; }
+        }
+
+        // Spawn Boss a cada 1000 pontos
+        if (score > 0 && score % 1000 === 0 && !boss) {
+            boss = { x: canvas.width / 2, y: 80, w: 70, h: 40, vida: 300, vidaMax: 300, dir: 1 };
+            addParticle(canvas.width / 2, 100, "CHEFÃO CHEGOU!", "#f43f5e");
+        }
+
+        // Tiro automático
+        shootTimer += dt;
+        if (shootTimer >= 0.3) {
+            shootTimer = 0;
+            if (doubleLaser) {
+                bullets.push({x: playerX - 10, y: playerY, vy: -400, type: 'normal'});
+                bullets.push({x: playerX + 10, y: playerY, vy: -400, type: 'normal'});
+            } else {
+                bullets.push({x: playerX, y: playerY, vy: -400, type: 'normal'});
+            }
+        }
+
+        // Spawn itens / inimigos
+        spawnTimer += dt;
+        if (!boss && spawnTimer >= 0.8) {
+            spawnTimer = 0;
+            const rand = Math.random();
+            let type = 'inimigo';
+            if (rand > 0.94) type = 'vida';
+            else if (rand > 0.88) type = 'escudo';
+            else if (rand > 0.82) type = 'laser_duplo';
+            else if (rand > 0.65) type = 'meteoro';
+
+            entities.push({ x: Math.random() * (canvas.width - 40) + 20, y: -30, type, r: 16 });
+        }
+
+        // Movimento do Boss
+        if (boss) {
+            boss.x += boss.dir * 120 * dt;
+            if (boss.x > canvas.width - 50 || boss.x < 50) boss.dir *= -1;
+            
+            bossShootTimer += dt;
+            if (bossShootTimer >= 0.8) {
+                bossShootTimer = 0;
+                bullets.push({x: boss.x - 15, y: boss.y + 20, vy: 250, type: 'boss'});
+                bullets.push({x: boss.x + 15, y: boss.y + 20, vy: 250, type: 'boss'});
+            }
+        }
+
+        // Atualizar Tiros
+        for (let i = bullets.length - 1; i >= 0; i--) {
+            let b = bullets[i];
+            b.y += b.vy * dt;
+
+            // Colisão tiro do boss com player
+            if (b.type === 'boss' && Math.abs(b.x - playerX) < 20 && Math.abs(b.y - playerY) < 20) {
+                bullets.splice(i, 1);
+                if (hasShield) { hasShield = false; }
+                else { hp -= 20; if(hp <= 0) gameOver(); }
+                continue;
+            }
+
+            // Colisão tiro do player com boss
+            if (boss && b.type === 'normal' && Math.abs(b.x - boss.x) < 35 && Math.abs(b.y - boss.y) < 20) {
+                bullets.splice(i, 1);
+                boss.vida -= 10;
+                if (boss.vida <= 0) {
+                    score += 500;
+                    addParticle(boss.x, boss.y, "+500 CHEFE DERROTADO", "#38bdf8");
+                    boss = null;
+                }
+                continue;
+            }
+
+            if (b.y < 0 || b.y > canvas.height) bullets.splice(i, 1);
+        }
+
+        // Atualizar Entidades (Inimigos, Meteoros e Power-ups)
+        for (let i = entities.length - 1; i >= 0; i--) {
+            let e = entities[i];
+            e.y += 180 * dt;
+
+            // Verificar tiros do player destruindo meteoros ou inimigos (ITENS BONS SÃO IGNORADOS PELOS TIROS)
+            if (e.type === 'meteoro' || e.type === 'inimigo') {
+                let destroyed = false;
+                for (let j = bullets.length - 1; j >= 0; j--) {
+                    let b = bullets[j];
+                    if (b.type === 'normal' && Math.abs(b.x - e.x) < 20 && Math.abs(b.y - e.y) < 20) {
+                        bullets.splice(j, 1);
+                        destroyed = true;
+                        score += e.type === 'meteoro' ? 30 : 15;
+                        addParticle(e.x, e.y, e.type === 'meteoro' ? '+30' : '+15', '#38bdf8');
+                        break;
+                    }
+                }
+                if (destroyed) { entities.splice(i, 1); continue; }
+            }
+
+            // Colisão do Player com o Objeto
+            if (Math.abs(e.x - playerX) < 25 && Math.abs(e.y - playerY) < 25) {
+                if (e.type === 'vida') { hp = Math.min(100, hp + 25); addParticle(playerX, playerY, "+25 HP", "#f43f5e"); }
+                else if (e.type === 'escudo') { hasShield = true; addParticle(playerX, playerY, "ESCUDO", "#38bdf8"); }
+                else if (e.type === 'laser_duplo') { doubleLaser = true; laserTimer = 0; addParticle(playerX, playerY, "DUPLO", "#06b6d4"); }
+                else {
+                    if (hasShield) { hasShield = false; }
+                    else { hp -= e.type === 'meteoro' ? 30 : 15; if (hp <= 0) gameOver(); }
+                }
+                entities.splice(i, 1);
+                continue;
+            }
+
+            if (e.y > canvas.height + 30) entities.splice(i, 1);
+        }
+    }
+
+    function gameOver() {
+        state = 'gameover';
+        document.getElementById('hud').classList.add('hidden');
+        document.getElementById('finalScore').innerText = "Pontuação Final: " + score;
+        document.getElementById('screenGameOver').classList.remove('hidden');
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Desenhar Jogador
+        ctx.fillStyle = '#06b6d4';
+        ctx.beginPath();
+        ctx.moveTo(playerX, playerY - 15);
+        ctx.lineTo(playerX - 15, playerY + 15);
+        ctx.lineTo(playerX + 15, playerY + 15);
+        ctx.closePath();
+        ctx.fill();
+
+        if (hasShield) {
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(playerX, playerY, 22, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+
+        // Desenhar Boss
+        if (boss) {
+            ctx.fillStyle = '#f43f5e';
+            ctx.fillRect(boss.x - 35, boss.y - 20, 70, 40);
+            // Barra de vida do boss
+            ctx.fillStyle = '#020617';
+            ctx.fillRect(boss.x - 35, boss.y - 32, 70, 6);
+            ctx.fillStyle = '#f43f5e';
+            ctx.fillRect(boss.x - 35, boss.y - 32, 70 * (boss.vida / boss.vidaMax), 6);
+        }
+
+        // Desenhar Entidades
+        entities.forEach(e => {
+            ctx.fillStyle = e.type === 'vida' ? '#f43f5e' : (e.type === 'escudo' || e.type === 'laser_duplo' ? '#38bdf8' : (e.type === 'meteoro' ? '#d97706' : '#ef4444'));
+            ctx.beginPath();
+            ctx.arc(e.x, e.y, 14, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // Desenhar Tiros
+        bullets.forEach(b => {
+            ctx.fillStyle = b.type === 'boss' ? '#f43f5e' : '#22d3ee';
+            ctx.fillRect(b.x - 2, b.y - 6, 4, 12);
+        });
+
+        // Desenhar Partículas
+        particles.forEach(p => {
+            ctx.fillStyle = p.color;
+            ctx.font = 'bold 12px monospace';
+            ctx.fillText(p.text, p.x - 15, p.y);
+            p.y -= 0.5;
+        });
+    }
+
+    let lastTime = 0;
+    function loop(time) {
+        if (!lastTime) lastTime = time;
+        const dt = Math.min((time - lastTime) / 1000, 0.1);
+        lastTime = time;
+
+        update(dt);
+        draw();
+        requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+</script>
+</body>
+</html>
