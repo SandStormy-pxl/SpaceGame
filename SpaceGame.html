@@ -12,7 +12,8 @@
         .ui-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 16px; z-index: 10; }
         .interactive { pointer-events: auto; }
         .hud-top { display: flex; justify-content: space-between; align-items: center; width: 100%; }
-        .btn { background: #0f172a; border: 1px solid #1e293b; color: #38bdf8; padding: 8px 14px; border-radius: 8px; font-family: monospace; font-weight: bold; font-size: 12px; cursor: pointer; }
+        .hud-group { display: flex; gap: 8px; align-items: center; }
+        .btn { background: #0f172a; border: 1px solid #1e293b; color: #38bdf8; padding: 8px 12px; border-radius: 8px; font-family: monospace; font-weight: bold; font-size: 11px; cursor: pointer; }
         .btn:active { transform: scale(0.95); }
         .btn-primary { background: #06b6d4; color: #000; border: none; width: 100%; padding: 16px; border-radius: 12px; font-size: 14px; font-weight: 900; text-transform: uppercase; cursor: pointer; }
         .screen { position: absolute; inset: 0; background: rgba(2, 6, 23, 0.95); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; z-index: 20; }
@@ -31,7 +32,10 @@
     <!-- HUD DO JOGO -->
     <div id="hud" class="ui-overlay hidden">
         <div class="hud-top">
-            <button class="btn interactive" id="btnPause">PAUSE</button>
+            <div class="hud-group">
+                <button class="btn interactive" id="btnPause">PAUSE</button>
+                <button class="btn interactive" id="btnFullscreen">FULSCREEN</button>
+            </div>
             <div style="text-align: right;">
                 <div style="font-size: 9px; color: #64748b;">SCORE</div>
                 <div id="hudScore" style="font-size: 14px; font-weight: bold; color: #38bdf8;">0</div>
@@ -50,8 +54,9 @@
     <div id="screenMenu" class="screen">
         <h1>Nexus Strike</h1>
         <p>Versão Mobile Standalone</p>
-        <div style="width: 100%; max-width: 280px;">
+        <div style="width: 100%; max-width: 280px; display: flex; flex-direction: column; gap: 12px;">
             <button class="btn-primary interactive" id="btnStart">INICIAR MISSÃO</button>
+            <button class="btn interactive" id="btnMenuFullscreen" style="width: 100%; padding: 12px;">TELA CHEIA</button>
         </div>
     </div>
 
@@ -84,15 +89,22 @@
     window.addEventListener('resize', resize);
     resize();
 
-    let state = 'menu'; // menu, playing, paused, gameover
+    function toggleFullScreen() {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch(() => {});
+        } else if (document.exitFullscreen) {
+            document.exitFullscreen();
+        }
+    }
+
+    document.getElementById('btnFullscreen').onclick = toggleFullScreen;
+    document.getElementById('btnMenuFullscreen').onclick = toggleFullScreen;
+
+    let state = 'menu';
     let score = 0, hp = 100, playerX = canvas.width / 2, playerY = canvas.height - 80;
     let hasShield = false, doubleLaser = false, laserTimer = 0;
     let entities = [], bullets = [], particles = [], boss = null;
     let spawnTimer = 0, shootTimer = 0, bossShootTimer = 0;
-
-    const keys = {};
-    window.addEventListener('keydown', e => keys[e.key] = true);
-    window.addEventListener('keyup', e => keys[e.key] = false);
 
     canvas.addEventListener('touchmove', e => {
         if(state === 'playing') {
@@ -139,13 +151,11 @@
             if (laserTimer > 7) { doubleLaser = false; laserTimer = 0; }
         }
 
-        // Spawn Boss a cada 1000 pontos
         if (score > 0 && score % 1000 === 0 && !boss) {
             boss = { x: canvas.width / 2, y: 80, w: 70, h: 40, vida: 300, vidaMax: 300, dir: 1 };
             addParticle(canvas.width / 2, 100, "CHEFÃO CHEGOU!", "#f43f5e");
         }
 
-        // Tiro automático
         shootTimer += dt;
         if (shootTimer >= 0.3) {
             shootTimer = 0;
@@ -157,7 +167,6 @@
             }
         }
 
-        // Spawn itens / inimigos
         spawnTimer += dt;
         if (!boss && spawnTimer >= 0.8) {
             spawnTimer = 0;
@@ -171,7 +180,6 @@
             entities.push({ x: Math.random() * (canvas.width - 40) + 20, y: -30, type, r: 16 });
         }
 
-        // Movimento do Boss
         if (boss) {
             boss.x += boss.dir * 120 * dt;
             if (boss.x > canvas.width - 50 || boss.x < 50) boss.dir *= -1;
@@ -184,12 +192,10 @@
             }
         }
 
-        // Atualizar Tiros
         for (let i = bullets.length - 1; i >= 0; i--) {
             let b = bullets[i];
             b.y += b.vy * dt;
 
-            // Colisão tiro do boss com player
             if (b.type === 'boss' && Math.abs(b.x - playerX) < 20 && Math.abs(b.y - playerY) < 20) {
                 bullets.splice(i, 1);
                 if (hasShield) { hasShield = false; }
@@ -197,7 +203,6 @@
                 continue;
             }
 
-            // Colisão tiro do player com boss
             if (boss && b.type === 'normal' && Math.abs(b.x - boss.x) < 35 && Math.abs(b.y - boss.y) < 20) {
                 bullets.splice(i, 1);
                 boss.vida -= 10;
@@ -212,12 +217,10 @@
             if (b.y < 0 || b.y > canvas.height) bullets.splice(i, 1);
         }
 
-        // Atualizar Entidades (Inimigos, Meteoros e Power-ups)
         for (let i = entities.length - 1; i >= 0; i--) {
             let e = entities[i];
             e.y += 180 * dt;
 
-            // Verificar tiros do player destruindo meteoros ou inimigos (ITENS BONS SÃO IGNORADOS PELOS TIROS)
             if (e.type === 'meteoro' || e.type === 'inimigo') {
                 let destroyed = false;
                 for (let j = bullets.length - 1; j >= 0; j--) {
@@ -233,7 +236,6 @@
                 if (destroyed) { entities.splice(i, 1); continue; }
             }
 
-            // Colisão do Player com o Objeto
             if (Math.abs(e.x - playerX) < 25 && Math.abs(e.y - playerY) < 25) {
                 if (e.type === 'vida') { hp = Math.min(100, hp + 25); addParticle(playerX, playerY, "+25 HP", "#f43f5e"); }
                 else if (e.type === 'escudo') { hasShield = true; addParticle(playerX, playerY, "ESCUDO", "#38bdf8"); }
@@ -260,7 +262,6 @@
     function draw() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // Desenhar Jogador
         ctx.fillStyle = '#06b6d4';
         ctx.beginPath();
         ctx.moveTo(playerX, playerY - 15);
@@ -277,18 +278,15 @@
             ctx.stroke();
         }
 
-        // Desenhar Boss
         if (boss) {
             ctx.fillStyle = '#f43f5e';
             ctx.fillRect(boss.x - 35, boss.y - 20, 70, 40);
-            // Barra de vida do boss
             ctx.fillStyle = '#020617';
             ctx.fillRect(boss.x - 35, boss.y - 32, 70, 6);
             ctx.fillStyle = '#f43f5e';
             ctx.fillRect(boss.x - 35, boss.y - 32, 70 * (boss.vida / boss.vidaMax), 6);
         }
 
-        // Desenhar Entidades
         entities.forEach(e => {
             ctx.fillStyle = e.type === 'vida' ? '#f43f5e' : (e.type === 'escudo' || e.type === 'laser_duplo' ? '#38bdf8' : (e.type === 'meteoro' ? '#d97706' : '#ef4444'));
             ctx.beginPath();
@@ -296,13 +294,11 @@
             ctx.fill();
         });
 
-        // Desenhar Tiros
         bullets.forEach(b => {
             ctx.fillStyle = b.type === 'boss' ? '#f43f5e' : '#22d3ee';
             ctx.fillRect(b.x - 2, b.y - 6, 4, 12);
         });
 
-        // Desenhar Partículas
         particles.forEach(p => {
             ctx.fillStyle = p.color;
             ctx.font = 'bold 12px monospace';
